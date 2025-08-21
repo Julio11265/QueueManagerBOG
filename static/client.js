@@ -1,11 +1,10 @@
 /* global io */
 const socket = io({
-  // asegura conexión robusta en Render
   transports: ['websocket', 'polling'],
   path: '/socket.io/'
 });
 
-// --- utils ---
+// ---- utils ----
 function clampNonNegative(input) {
   let v = parseInt(input.value, 10);
   if (isNaN(v) || v < 0) v = 0;
@@ -35,7 +34,6 @@ function applyPriorityRowClass(tableId) {
 }
 
 function hydrateFromState(state) {
-  // Pinta toda la UI con el estado recibido del servidor
   if (!state) return;
 
   // Status
@@ -62,7 +60,7 @@ function hydrateFromState(state) {
   applyPriorityRowClass('status-table');
 }
 
-// --- binders ---
+// ---- binders ----
 function bindInputs() {
   // number inputs: emite al cambiar y mientras escribes (debounce)
   document.querySelectorAll('input[type="number"]').forEach(input => {
@@ -86,7 +84,7 @@ function bindInputs() {
       const table = sel.dataset.table;
       const field = sel.dataset.field;
       socket.emit('update_cell', { table, agent, field, value: sel.value });
-      applyPriorityRowClass('status-table');
+      applyPriorityRowClass('status-table'); // pinta al instante
     });
   });
 
@@ -109,14 +107,20 @@ function bindInputs() {
   });
 
   applyPriorityRowClass('status-table');
+  console.log('[client] bindInputs attached');
 }
 
-// --- socket events ---
+// ---- socket events ----
 socket.on('connect', () => {
-  // Nada especial; el servidor envía 'full_state'
+  console.log('[socket] connected');
+});
+
+socket.on('connect_error', (err) => {
+  console.error('[socket] connect_error', err);
 });
 
 socket.on('full_state', (state) => {
+  console.log('[socket] full_state');
   hydrateFromState(state);
 });
 
@@ -137,7 +141,6 @@ socket.on('cell_updated', (msg) => {
 });
 
 socket.on('agent_renamed', ({ old_name, new_name }) => {
-  // Update both tables
   ['status-table', 'assignment-table'].forEach(id => {
     const row = document.querySelector(`#${id} tbody tr[data-agent="${old_name}"]`);
     if (row) {
@@ -158,8 +161,13 @@ socket.on('error_msg', (data) => {
   alert(data.message || 'Error');
 });
 
-// keep the date fresh (server also renders it)
+// fecha (redundante con server, pero útil)
 const todayEl = document.getElementById('today');
 if (todayEl) todayEl.textContent = new Date().toISOString().slice(0,10);
 
-document.addEventListener('DOMContentLoaded', bindInputs);
+// *** CLAVE: ejecutar bindInputs siempre, esté o no disparado DOMContentLoaded ***
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', bindInputs);
+} else {
+  bindInputs();
+}
