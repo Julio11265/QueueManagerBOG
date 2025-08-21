@@ -45,7 +45,7 @@ function bindInputs() {
 }
 
 socket.on('connect', () => {
-  // Nothing needed; server will push full_state
+  try { applyPriorityRowClass('status-table'); } catch(e) {}
 });
 
 socket.on('full_state', (state) => {
