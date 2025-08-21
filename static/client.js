@@ -1,5 +1,9 @@
 /* global io */
-const socket = io();
+const socket = io({
+  // asegura conexión robusta en Render
+  transports: ['websocket', 'polling'],
+  path: '/socket.io/'
+});
 
 // --- utils ---
 function clampNonNegative(input) {
@@ -30,9 +34,37 @@ function applyPriorityRowClass(tableId) {
   }
 }
 
+function hydrateFromState(state) {
+  // Pinta toda la UI con el estado recibido del servidor
+  if (!state) return;
+
+  // Status
+  state.status.forEach(row => {
+    const tr = document.querySelector(`#status-table tbody tr[data-agent="${row.name}"]`);
+    if (!tr) return;
+    tr.querySelector('input[data-field="backlog"]').value = row.backlog;
+    tr.querySelector('input[data-field="active"]').value = row.active;
+    const sel = tr.querySelector('select[data-field="priority"]');
+    if (sel) sel.value = row.priority || '';
+  });
+
+  // Assignment
+  state.assignment.forEach(row => {
+    const tr = document.querySelector(`#assignment-table tbody tr[data-agent="${row.name}"]`);
+    if (!tr) return;
+    const nameInput = tr.querySelector('.agent-input');
+    if (nameInput) nameInput.value = row.name;
+    tr.querySelector('input[data-field="easy_to_handle"]').value = row.easy_to_handle;
+    tr.querySelector('input[data-field="investigation"]').value = row.investigation;
+    tr.querySelector('input[data-field="autoclose_tickets"]').value = row.autoclose_tickets;
+  });
+
+  applyPriorityRowClass('status-table');
+}
+
 // --- binders ---
 function bindInputs() {
-  // number inputs: emit on change + debounced input (para “en vivo” al tipear)
+  // number inputs: emite al cambiar y mientras escribes (debounce)
   document.querySelectorAll('input[type="number"]').forEach(input => {
     const send = () => {
       const v = clampNonNegative(input);
@@ -43,7 +75,7 @@ function bindInputs() {
       socket.emit('update_cell', { table, agent, field, value: v });
     };
     input.addEventListener('change', send);
-    input.addEventListener('input', debounce(send, 300));
+    input.addEventListener('input', debounce(send, 250));
   });
 
   // priority selects
@@ -76,17 +108,16 @@ function bindInputs() {
     });
   });
 
-  // initial paint
   applyPriorityRowClass('status-table');
 }
 
 // --- socket events ---
 socket.on('connect', () => {
-  applyPriorityRowClass('status-table');
+  // Nada especial; el servidor envía 'full_state'
 });
 
-socket.on('full_state', () => {
-  applyPriorityRowClass('status-table');
+socket.on('full_state', (state) => {
+  hydrateFromState(state);
 });
 
 socket.on('cell_updated', (msg) => {
