@@ -149,3 +149,11 @@ input[type="number"]:focus, select:focus{
   thead th:nth-child(2), thead th:nth-child(3),
   tbody td:nth-child(2), tbody td:nth-child(3){ width:22%; }
 }
+
+/* Pintado por CSS, sin JS, segun option seleccionado */
+#status-table tbody tr:has(select[data-field="priority"] option[value="P1"]:checked) td {
+  background: var(--row-p1) !important;
+}
+#status-table tbody tr:has(select[data-field="priority"] option[value="P2"]:checked) td {
+  background: var(--row-p2) !important;
+}
