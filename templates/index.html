@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=6" />
 </head>
 <body>
   <header class="app-header">
@@ -82,6 +82,6 @@
   </footer>
 
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" integrity="sha384-r3EoVVHjX+eS2q5WgbsFq2mZ7GszlndGq2a8E0uB0C3Ubm+Wm9nP68bwQzB+z7YV" crossorigin="anonymous"></script>
-  <script src="{{ url_for('static', filename='client.js') }}"></script>
+  <script src="{{ url_for('static', filename='client.js') }}?v=6"></script>
 </body>
 </html>
