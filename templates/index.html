@@ -30,7 +30,8 @@
           </thead>
           <tbody>
             {% for row in state['status'] %}
-            <tr data-agent="{{ row['name'] }}">
+            <tr data-agent="{{ row['name'] }}"
+                class="{% if row['priority']=='P1' %}p1{% elif row['priority']=='P2' %}p2{% endif %}">
               <td class="agent-name">{{ row["name"] }}</td>
               <td><input type="number" min="0" value="{{ row['backlog'] }}" data-table="status" data-field="backlog" /></td>
               <td><input type="number" min="0" value="{{ row['active'] }}" data-table="status" data-field="active" /></td>
@@ -63,7 +64,9 @@
           <tbody>
             {% for row in state['assignment'] %}
             <tr data-agent="{{ row['name'] }}">
-              <td class="agent-name">{{ row["name"] }}</td>
+              <td class="agent-name">
+                <input class="agent-input" type="text" value="{{ row['name'] }}" />
+              </td>
               <td><input type="number" min="0" value="{{ row['easy_to_handle'] }}" data-table="assignment" data-field="easy_to_handle" /></td>
               <td><input type="number" min="0" value="{{ row['investigation'] }}" data-table="assignment" data-field="investigation" /></td>
               <td><input type="number" min="0" value="{{ row['autoclose_tickets'] }}" data-table="assignment" data-field="autoclose_tickets" /></td>
