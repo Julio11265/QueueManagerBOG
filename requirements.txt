@@ -4,3 +4,5 @@ python-socketio==5.10.0
 gevent==24.10.3
 gevent-websocket==0.10.1
 gunicorn==22.0.0
+SQLAlchemy==2.0.32
+psycopg2-binary==2.9.9
