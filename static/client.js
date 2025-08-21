@@ -1,11 +1,20 @@
 /* global io */
 const socket = io();
 
+// --- utils ---
 function clampNonNegative(input) {
   let v = parseInt(input.value, 10);
   if (isNaN(v) || v < 0) v = 0;
   input.value = v;
   return v;
+}
+
+function debounce(fn, wait = 300) {
+  let t = null;
+  return (...args) => {
+    clearTimeout(t);
+    t = setTimeout(() => fn(...args), wait);
+  };
 }
 
 function applyPriorityRowClass(tableId) {
@@ -21,17 +30,20 @@ function applyPriorityRowClass(tableId) {
   }
 }
 
+// --- binders ---
 function bindInputs() {
-  // number inputs
+  // number inputs: emit on change + debounced input (para “en vivo” al tipear)
   document.querySelectorAll('input[type="number"]').forEach(input => {
-    input.addEventListener('change', () => {
+    const send = () => {
       const v = clampNonNegative(input);
       const tr = input.closest('tr');
       const agent = tr.getAttribute('data-agent');
       const table = input.dataset.table;
       const field = input.dataset.field;
       socket.emit('update_cell', { table, agent, field, value: v });
-    });
+    };
+    input.addEventListener('change', send);
+    input.addEventListener('input', debounce(send, 300));
   });
 
   // priority selects
@@ -68,6 +80,7 @@ function bindInputs() {
   applyPriorityRowClass('status-table');
 }
 
+// --- socket events ---
 socket.on('connect', () => {
   applyPriorityRowClass('status-table');
 });
@@ -106,7 +119,6 @@ socket.on('agent_renamed', ({ old_name, new_name }) => {
   });
 });
 
-// basic escaping for text content
 function newNameSafe(s) {
   return s.replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
 }
