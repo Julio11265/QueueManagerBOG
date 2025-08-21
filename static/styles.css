@@ -113,13 +113,13 @@ input[type="number"]:focus, select:focus{
 }
 
 /* ===== Prioridad por fila (color visible en toda la celda) ===== */
-tr.p1 td { background: var(--row-p1) !important; }
-tr.p2 td { background: var(--row-p2) !important; }
-tr.p1 { border-left:4px solid var(--row-p1-border); }
-tr.p2 { border-left:4px solid var(--row-p2-border); }
+#status-table tbody tr.p1 td { background: var(--row-p1) !important; }
+#status-table tbody tr.p2 td { background: var(--row-p2) !important; }
+#status-table tbody tr.p1 { border-left:4px solid var(--row-p1-border); }
+#status-table tbody tr.p2 { border-left:4px solid var(--row-p2-border); }
 /* armoniza inputs/selects cuando hay color de fila */
-tr.p1 input, tr.p1 select { background:#fff7f7 !important; border-color:#fecaca !important; }
-tr.p2 input, tr.p2 select { background:#fffbea !important; border-color:#fde68a !important; }
+#status-table tbody tr.p1 input, #status-table tbody tr.p1 select { background:#fff7f7 !important; border-color:#fecaca !important; }
+#status-table tbody tr.p2 input, #status-table tbody tr.p2 select { background:#fffbea !important; border-color:#fde68a !important; }
 
 /* ===== Input de nombre en Assignment con mismo estilo ===== */
 #assignment-table .agent-input{
