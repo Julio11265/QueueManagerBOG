@@ -65,6 +65,8 @@ app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret")
 socketio = SocketIO(app, cors_allowed_origins="*")
 
+init_db()
+
 @app.route("/health")
 def health():
     return jsonify({"ok": True, "time": datetime.utcnow().isoformat()})
@@ -131,7 +133,6 @@ def on_update_cell(data):
     socketio.emit("cell_updated", {"agent": agent, "table": table, "field": field, "value": value})
 
 if __name__ == "__main__":
-    init_db()
     # Render and local friendly port
     port = int(os.environ.get("PORT", "10000"))
     socketio.run(app, host="0.0.0.0", port=port)
