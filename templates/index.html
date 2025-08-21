@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Moneycorp BOG team - Queue Manager</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+</head>
+<body>
+  <header class="app-header">
+    <h1>Moneycorp BOG team — Queue Manager</h1>
+    <div class="today" id="today">{{ today }}</div>
+  </header>
+
+  <main>
+    <section>
+      <h2>Current Status</h2>
+      <div class="table-wrapper">
+        <table id="status-table">
+          <thead>
+            <tr>
+              <th>Agent</th>
+              <th>Backlog</th>
+              <th>Active</th>
+              <th>Priority</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in state['status'] %}
+            <tr data-agent="{{ row['name'] }}">
+              <td class="agent-name">{{ row["name"] }}</td>
+              <td><input type="number" min="0" value="{{ row['backlog'] }}" data-table="status" data-field="backlog" /></td>
+              <td><input type="number" min="0" value="{{ row['active'] }}" data-table="status" data-field="active" /></td>
+              <td>
+                <select data-table="status" data-field="priority">
+                  <option value="" {% if row['priority']=='' %}selected{% endif %}>None</option>
+                  <option value="P1" {% if row['priority']=='P1' %}selected{% endif %}>P1</option>
+                  <option value="P2" {% if row['priority']=='P2' %}selected{% endif %}>P2</option>
+                </select>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section>
+      <h2>Assignment</h2>
+      <div class="table-wrapper">
+        <table id="assignment-table">
+          <thead>
+            <tr>
+              <th>Agent</th>
+              <th>Easy to handle</th>
+              <th>Investigation</th>
+              <th>Autoclose tickets</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in state['assignment'] %}
+            <tr data-agent="{{ row['name'] }}">
+              <td class="agent-name">{{ row["name"] }}</td>
+              <td><input type="number" min="0" value="{{ row['easy_to_handle'] }}" data-table="assignment" data-field="easy_to_handle" /></td>
+              <td><input type="number" min="0" value="{{ row['investigation'] }}" data-table="assignment" data-field="investigation" /></td>
+              <td><input type="number" min="0" value="{{ row['autoclose_tickets'] }}" data-table="assignment" data-field="autoclose_tickets" /></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <footer class="app-footer">
+    <small>Created by: Julio Gonzalez — Version 1.0</small>
+  </footer>
+
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" integrity="sha384-r3EoVVHjX+eS2q5WgbsFq2mZ7GszlndGq2a8E0uB0C3Ubm+Wm9nP68bwQzB+z7YV" crossorigin="anonymous"></script>
+  <script src="{{ url_for('static', filename='client.js') }}"></script>
+</body>
+</html>
