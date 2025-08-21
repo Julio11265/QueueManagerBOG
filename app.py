@@ -1,145 +1,144 @@
 import os
-# ---- Asegura coop. con gevent (opcional pero recomendado) ----
+# Parche cooperativo para gevent (mejor convivencia con requests, sockets, etc.)
 try:
     from gevent import monkey  # type: ignore
     monkey.patch_all()
 except Exception:
     pass
 
-import sqlite3
-from flask import Flask, render_template, jsonify
-from flask_socketio import SocketIO, emit
 from datetime import datetime
 
-# --------- Database helpers ---------
-DB_PATH = os.environ.get("DB_PATH") or (
-    "/data/queue_manager.db" if os.path.isdir("/data")
-    else os.path.join(os.path.dirname(__file__), "queue_manager.db")
+from flask import Flask, render_template, jsonify
+from flask_socketio import SocketIO, emit
+
+from sqlalchemy import (
+    create_engine, MetaData, Table, Column, String, Integer, ForeignKey, select, func, and_
+)
+from sqlalchemy.engine import Engine
+from sqlalchemy.exc import OperationalError, ProgrammingError
+
+# ----------------- DB CONFIG -----------------
+def normalize_db_url(raw: str) -> str:
+    """Acepta postgres://... y lo convierte a postgresql+psycopg2://..."""
+    if raw.startswith("postgres://"):
+        return raw.replace("postgres://", "postgresql+psycopg2://", 1)
+    if raw.startswith("postgresql://"):
+        return raw.replace("postgresql://", "postgresql+psycopg2://", 1)
+    return raw
+
+DB_FILE = "queue_manager.db"
+DEFAULT_SQLITE_URL = f"sqlite:///{DB_FILE}"
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+if DATABASE_URL:
+    DATABASE_URL = normalize_db_url(DATABASE_URL)
+else:
+    # Fallback: SQLite local (se pierde al redeploy en Render free)
+    DATABASE_URL = DEFAULT_SQLITE_URL
+
+engine: Engine = create_engine(DATABASE_URL, pool_pre_ping=True, future=True)
+
+metadata = MetaData()
+
+agents = Table(
+    "agents", metadata,
+    Column("name", String, primary_key=True)
 )
 
-def get_db():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    return conn
+status = Table(
+    "status", metadata,
+    Column("agent_name", String, ForeignKey("agents.name"), primary_key=True),
+    Column("backlog", Integer, nullable=False, default=0, server_default="0"),
+    Column("active", Integer, nullable=False, default=0, server_default="0"),
+    Column("priority", String, nullable=True),
+)
 
-def init_db():
-    """Create tables if they don't exist and seed default agents."""
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS agents(
-            name TEXT PRIMARY KEY
-        )
-    """)
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS status(
-            agent_name TEXT PRIMARY KEY,
-            backlog INTEGER NOT NULL DEFAULT 0,
-            active INTEGER NOT NULL DEFAULT 0,
-            priority TEXT DEFAULT NULL,
-            FOREIGN KEY(agent_name) REFERENCES agents(name)
-        )
-    """)
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS assignment(
-            agent_name TEXT PRIMARY KEY,
-            easy_to_handle INTEGER NOT NULL DEFAULT 0,
-            investigation INTEGER NOT NULL DEFAULT 0,
-            autoclose_tickets INTEGER NOT NULL DEFAULT 0,
-            FOREIGN KEY(agent_name) REFERENCES agents(name)
-        )
-    """)
-    conn.commit()
+assignment = Table(
+    "assignment", metadata,
+    Column("agent_name", String, ForeignKey("agents.name"), primary_key=True),
+    Column("easy_to_handle", Integer, nullable=False, default=0, server_default="0"),
+    Column("investigation", Integer, nullable=False, default=0, server_default="0"),
+    Column("autoclose_tickets", Integer, nullable=False, default=0, server_default="0"),
+)
 
-    # Seed initial agents if empty
-    cur.execute("SELECT COUNT(*) AS c FROM agents")
-    if cur.fetchone()["c"] == 0:
-        for a in ["Victor", "Julio", "Felipe", "Cindy"]:
-            cur.execute("INSERT OR IGNORE INTO agents(name) VALUES(?)", (a,))
-            cur.execute(
-                "INSERT OR IGNORE INTO status(agent_name, backlog, active, priority) VALUES(?,?,?,?)",
-                (a, 0, 0, None),
-            )
-            cur.execute(
-                "INSERT OR IGNORE INTO assignment(agent_name, easy_to_handle, investigation, autoclose_tickets) VALUES(?,?,?,?)",
-                (a, 0, 0, 0),
-            )
-        conn.commit()
-    conn.close()
+DEFAULT_AGENTS = ["Victor", "Julio", "Felipe", "Cindy"]
+
+def init_db() -> None:
+    """Crea tablas y datos base si no existen (funciona en Postgres y SQLite)."""
+    metadata.create_all(engine)
+    with engine.begin() as conn:
+        # ¿Hay agentes?
+        cnt = conn.scalar(select(func.count()).select_from(agents))
+        if cnt == 0:
+            for name in DEFAULT_AGENTS:
+                conn.execute(agents.insert().values(name=name))
+                conn.execute(status.insert().values(agent_name=name, backlog=0, active=0, priority=None))
+                conn.execute(assignment.insert().values(
+                    agent_name=name, easy_to_handle=0, investigation=0, autoclose_tickets=0
+                ))
 
 def fetch_state():
-    """Return full state for both tables. If tables are missing, init and retry once."""
+    """Devuelve el estado completo."""
     try:
-        conn = get_db()
-        cur = conn.cursor()
-        cur.execute(
-            """
-            SELECT a.name, s.backlog, s.active, IFNULL(s.priority,'') AS priority
-            FROM agents a
-            JOIN status s ON a.name = s.agent_name
-            ORDER BY a.name
-            """
-        )
-        status_rows = [dict(row) for row in cur.fetchall()]
-        cur.execute(
-            """
-            SELECT a.name, t.easy_to_handle, t.investigation, t.autoclose_tickets
-            FROM agents a
-            JOIN assignment t ON a.name = t.agent_name
-            ORDER BY a.name
-            """
-        )
-        assign_rows = [dict(row) for row in cur.fetchall()]
-        conn.close()
-        return {"status": status_rows, "assignment": assign_rows}
-    except sqlite3.OperationalError as e:
-        if "no such table" in str(e):
-            init_db()
-            return fetch_state()
-        raise
+        with engine.begin() as conn:
+            st = conn.execute(
+                select(
+                    agents.c.name,
+                    status.c.backlog,
+                    status.c.active,
+                    func.coalesce(status.c.priority, "").label("priority")
+                ).join(status, status.c.agent_name == agents.c.name).order_by(agents.c.name)
+            ).mappings().all()
+
+            asg = conn.execute(
+                select(
+                    agents.c.name,
+                    assignment.c.easy_to_handle,
+                    assignment.c.investigation,
+                    assignment.c.autoclose_tickets
+                ).join(assignment, assignment.c.agent_name == agents.c.name).order_by(agents.c.name)
+            ).mappings().all()
+        return {"status": [dict(r) for r in st], "assignment": [dict(r) for r in asg]}
+    except (OperationalError, ProgrammingError):
+        init_db()
+        return fetch_state()
 
 ALLOWED_STATUS_FIELDS = {"backlog", "active", "priority"}
 ALLOWED_ASSIGN_FIELDS = {"easy_to_handle", "investigation", "autoclose_tickets"}
 PRIORITY_VALUES = {"", "P1", "P2"}
 
-# --------- App ---------
+# ----------------- APP -----------------
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret")
-
-# gevent async mode (coincide con el worker de gunicorn)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="gevent")
 
-# Asegura DB creada al importar (bajo gunicorn)
+# Garantiza que las tablas existan al iniciar con gunicorn
 init_db()
 
-# --------- Routes ---------
-@app.route("/health")
-def health():
-    return jsonify({
-        "ok": True,
-        "time": datetime.utcnow().isoformat(),
-        "db_path": DB_PATH
-    })
-
+# ----------------- ROUTES -----------------
 @app.route("/")
 def index():
     state = fetch_state()
     today = datetime.now().strftime("%Y-%m-%d")
     return render_template("index.html", state=state, today=today)
 
-# --------- Socket.IO events ---------
+@app.route("/health")
+def health():
+    return jsonify({
+        "ok": True,
+        "time": datetime.utcnow().isoformat(),
+        "db_url": DATABASE_URL.split("@")[-1] if "@" in DATABASE_URL else DATABASE_URL,
+    })
+
+# ----------------- SOCKET EVENTS -----------------
 @socketio.on("connect")
 def on_connect():
-    # Envía el estado completo al recién conectado
     emit("full_state", fetch_state())
 
 @socketio.on("update_cell")
 def on_update_cell(data):
     """
-    data: {table: 'status'|'assignment', agent: str, field: str, value: any}
-    - Numbers >= 0
-    - Priority in {'', 'P1', 'P2'}
-    - Auto-creates agent rows if missing
+    data = {table: 'status'|'assignment', agent: str, field: str, value: any}
     """
     table = data.get("table")
     agent = (data.get("agent") or "").strip()
@@ -147,90 +146,69 @@ def on_update_cell(data):
     value = data.get("value")
 
     if not agent:
-        emit("error_msg", {"message": "Agent is required."})
-        return
+        emit("error_msg", {"message": "Agent is required."}); return
     if table not in {"status", "assignment"}:
-        emit("error_msg", {"message": "Invalid table"})
-        return
+        emit("error_msg", {"message": "Invalid table"}); return
     if table == "status" and field not in ALLOWED_STATUS_FIELDS:
-        emit("error_msg", {"message": "Invalid field"})
-        return
+        emit("error_msg", {"message": "Invalid field"}); return
     if table == "assignment" and field not in ALLOWED_ASSIGN_FIELDS:
-        emit("error_msg", {"message": "Invalid field"})
-        return
+        emit("error_msg", {"message": "Invalid field"}); return
 
-    conn = get_db()
-    cur = conn.cursor()
+    with engine.begin() as conn:
+        # Upsert básico: si no existe, lo creo
+        if not conn.scalar(select(func.count()).select_from(agents).where(agents.c.name == agent)):
+            conn.execute(agents.insert().values(name=agent))
+        if not conn.scalar(select(func.count()).select_from(status).where(status.c.agent_name == agent)):
+            conn.execute(status.insert().values(agent_name=agent, backlog=0, active=0, priority=None))
+        if not conn.scalar(select(func.count()).select_from(assignment).where(assignment.c.agent_name == agent)):
+            conn.execute(assignment.insert().values(
+                agent_name=agent, easy_to_handle=0, investigation=0, autoclose_tickets=0
+            ))
 
-    # Ensure agent exists
-    cur.execute("INSERT OR IGNORE INTO agents(name) VALUES(?)", (agent,))
-    cur.execute("INSERT OR IGNORE INTO status(agent_name) VALUES(?)", (agent,))
-    cur.execute("INSERT OR IGNORE INTO assignment(agent_name) VALUES(?)", (agent,))
+        if field == "priority":
+            val = (value or "").upper()
+            if val not in PRIORITY_VALUES:
+                val = ""
+            conn.execute(
+                status.update().where(status.c.agent_name == agent).values(priority=val if val else None)
+            )
+        else:
+            try:
+                num = int(value)
+            except Exception:
+                num = 0
+            if num < 0: num = 0
+            if table == "status":
+                conn.execute(status.update().where(status.c.agent_name == agent).values({field: num}))
+            else:
+                conn.execute(assignment.update().where(assignment.c.agent_name == agent).values({field: num}))
 
-    if field == "priority":
-        val = (value or "").upper()
-        if val not in PRIORITY_VALUES:
-            val = ""
-        cur.execute("UPDATE status SET priority = ? WHERE agent_name = ?", (val if val else None, agent))
-    else:
-        try:
-            num = int(value)
-        except Exception:
-            num = 0
-        if num < 0:
-            num = 0
-        table_name = "status" if table == "status" else "assignment"
-        cur.execute(f"UPDATE {table_name} SET {field} = ? WHERE agent_name = ?", (num, agent))
-
-    conn.commit()
-    conn.close()
-
-    # Broadcast explícito a TODOS (incluye otros dispositivos)
-    socketio.emit("cell_updated", {
-        "agent": agent, "table": table, "field": field, "value": value
-    }, broadcast=True)
+    # Broadcast a todos (multi-dispositivo)
+    socketio.emit("cell_updated", {"agent": agent, "table": table, "field": field, "value": value}, broadcast=True)
 
 @socketio.on("rename_agent")
 def on_rename_agent(data):
-    """Rename an agent across agents/status/assignment."""
     old = (data.get("old_name") or "").strip()
     new = (data.get("new_name") or "").strip()
-
     if not old or not new:
-        emit("error_msg", {"message": "Agent name cannot be empty."})
-        return
+        emit("error_msg", {"message": "Agent name cannot be empty."}); return
     if old == new:
         return
 
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT 1 FROM agents WHERE name=?", (old,))
-    if not cur.fetchone():
-        conn.close()
-        emit("error_msg", {"message": "Original agent not found."})
-        return
-    cur.execute("SELECT 1 FROM agents WHERE name=?", (new,))
-    if cur.fetchone():
-        conn.close()
-        emit("error_msg", {"message": "Target name already exists."})
-        return
+    with engine.begin() as conn:
+        if not conn.scalar(select(func.count()).select_from(agents).where(agents.c.name == old)):
+            emit("error_msg", {"message": "Original agent not found."}); return
+        if conn.scalar(select(func.count()).select_from(agents).where(agents.c.name == new)):
+            emit("error_msg", {"message": "Target name already exists."}); return
 
-    try:
-        cur.execute("BEGIN")
-        cur.execute("UPDATE agents SET name=? WHERE name=?", (new, old))
-        cur.execute("UPDATE status SET agent_name=? WHERE agent_name=?", (new, old))
-        cur.execute("UPDATE assignment SET agent_name=? WHERE agent_name=?", (new, old))
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        conn.close()
-        emit("error_msg", {"message": "Rename failed."})
-        return
+        # Renombrar en cascada
+        conn.execute(agents.update().where(agents.c.name == old).values(name=new))
+        conn.execute(status.update().where(status.c.agent_name == old).values(agent_name=new))
+        conn.execute(assignment.update().where(assignment.c.agent_name == old).values(agent_name=new))
 
-    conn.close()
     socketio.emit("agent_renamed", {"old_name": old, "new_name": new}, broadcast=True)
 
-# --------- Local run ---------
+# Local run
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "10000"))
     socketio.run(app, host="0.0.0.0", port=port)
