@@ -1,4 +1,11 @@
 import os
+# ---- Asegura coop. con gevent (opcional pero recomendado) ----
+try:
+    from gevent import monkey  # type: ignore
+    monkey.patch_all()
+except Exception:
+    pass
+
 import sqlite3
 from flask import Flask, render_template, jsonify
 from flask_socketio import SocketIO, emit
@@ -99,16 +106,20 @@ PRIORITY_VALUES = {"", "P1", "P2"}
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret")
 
-# Use gevent; works on Render free tier with gevent worker
+# gevent async mode (coincide con el worker de gunicorn)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="gevent")
 
-# Ensure DB exists when app is imported (gunicorn workers)
+# Asegura DB creada al importar (bajo gunicorn)
 init_db()
 
 # --------- Routes ---------
 @app.route("/health")
 def health():
-    return jsonify({"ok": True, "time": datetime.utcnow().isoformat(), "db_path": DB_PATH})
+    return jsonify({
+        "ok": True,
+        "time": datetime.utcnow().isoformat(),
+        "db_path": DB_PATH
+    })
 
 @app.route("/")
 def index():
@@ -119,14 +130,15 @@ def index():
 # --------- Socket.IO events ---------
 @socketio.on("connect")
 def on_connect():
+    # Envía el estado completo al recién conectado
     emit("full_state", fetch_state())
 
 @socketio.on("update_cell")
 def on_update_cell(data):
     """
     data: {table: 'status'|'assignment', agent: str, field: str, value: any}
-    - Numbers are clamped to >= 0
-    - Priority only '', 'P1', 'P2'
+    - Numbers >= 0
+    - Priority in {'', 'P1', 'P2'}
     - Auto-creates agent rows if missing
     """
     table = data.get("table")
@@ -150,7 +162,7 @@ def on_update_cell(data):
     conn = get_db()
     cur = conn.cursor()
 
-    # Ensure agent exists in all tables
+    # Ensure agent exists
     cur.execute("INSERT OR IGNORE INTO agents(name) VALUES(?)", (agent,))
     cur.execute("INSERT OR IGNORE INTO status(agent_name) VALUES(?)", (agent,))
     cur.execute("INSERT OR IGNORE INTO assignment(agent_name) VALUES(?)", (agent,))
@@ -173,8 +185,10 @@ def on_update_cell(data):
     conn.commit()
     conn.close()
 
-    # Explicit broadcast so all devices update in real time
-    socketio.emit("cell_updated", {"agent": agent, "table": table, "field": field, "value": value}, broadcast=True)
+    # Broadcast explícito a TODOS (incluye otros dispositivos)
+    socketio.emit("cell_updated", {
+        "agent": agent, "table": table, "field": field, "value": value
+    }, broadcast=True)
 
 @socketio.on("rename_agent")
 def on_rename_agent(data):
