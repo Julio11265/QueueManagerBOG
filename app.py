@@ -63,7 +63,7 @@ PRIORITY_VALUES = {"", "P1", "P2"}
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret")
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
+socketio = SocketIO(app, cors_allowed_origins="*")
 
 @app.route("/health")
 def health():
