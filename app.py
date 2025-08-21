@@ -1,5 +1,5 @@
 import os
-# Parche cooperativo para gevent (mejor convivencia con sockets/IO)
+# Gevent monkey patch (mejora compat. IO/asíncrono)
 try:
     from gevent import monkey  # type: ignore
     monkey.patch_all()
@@ -7,7 +7,6 @@ except Exception:
     pass
 
 from datetime import datetime
-
 from flask import Flask, render_template, jsonify
 from flask_socketio import SocketIO, emit
 
@@ -19,7 +18,7 @@ from sqlalchemy.exc import OperationalError, ProgrammingError
 
 # ----------------- DB CONFIG -----------------
 def normalize_db_url(raw: str) -> str:
-    """Acepta postgres:// o postgresql:// y fuerza el driver psycopg3."""
+    # Fuerza psycopg3
     if raw.startswith("postgres://"):
         raw = raw.replace("postgres://", "postgresql://", 1)
     if raw.startswith("postgresql://"):
@@ -33,16 +32,12 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if DATABASE_URL:
     DATABASE_URL = normalize_db_url(DATABASE_URL)
 else:
-    # Fallback: SQLite local (en Render free se pierde al redeploy)
-    DATABASE_URL = DEFAULT_SQLITE_URL
+    DATABASE_URL = DEFAULT_SQLITE_URL  # solo dev local
 
 engine: Engine = create_engine(DATABASE_URL, pool_pre_ping=True, future=True)
 metadata = MetaData()
 
-agents = Table(
-    "agents", metadata,
-    Column("name", String, primary_key=True)
-)
+agents = Table("agents", metadata, Column("name", String, primary_key=True))
 
 status = Table(
     "status", metadata,
@@ -63,7 +58,6 @@ assignment = Table(
 DEFAULT_AGENTS = ["Victor", "Julio", "Felipe", "Cindy"]
 
 def init_db() -> None:
-    """Crea tablas y datos base si no existen (Postgres o SQLite)."""
     metadata.create_all(engine)
     with engine.begin() as conn:
         cnt = conn.scalar(select(func.count()).select_from(agents))
@@ -76,14 +70,12 @@ def init_db() -> None:
                 ))
 
 def fetch_state():
-    """Devuelve el estado completo."""
     try:
         with engine.begin() as conn:
             st = conn.execute(
                 select(
                     agents.c.name,
-                    status.c.backlog,
-                    status.c.active,
+                    status.c.backlog, status.c.active,
                     func.coalesce(status.c.priority, "").label("priority")
                 ).join(status, status.c.agent_name == agents.c.name).order_by(agents.c.name)
             ).mappings().all()
@@ -108,10 +100,15 @@ PRIORITY_VALUES = {"", "P1", "P2"}
 # ----------------- APP -----------------
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret")
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="gevent")
 
-# Garantiza tablas al iniciar (gunicorn)
-init_db()
+# Socket.IO con gevent y timeouts estables en Render
+socketio = SocketIO(
+    app, cors_allowed_origins="*",
+    async_mode="gevent",
+    ping_timeout=30, ping_interval=25
+)
+
+init_db()  # asegura tablas al iniciar
 
 # ----------------- ROUTES -----------------
 @app.route("/")
@@ -127,6 +124,11 @@ def health():
         "time": datetime.utcnow().isoformat(),
         "db_url": DATABASE_URL.split("@")[-1] if "@" in DATABASE_URL else DATABASE_URL,
     })
+
+# 🔎 Fallback para “near real-time” si el socket no conecta
+@app.get("/state")
+def http_state():
+    return jsonify(fetch_state())
 
 # ----------------- SOCKET EVENTS -----------------
 @socketio.on("connect")
@@ -150,7 +152,7 @@ def on_update_cell(data):
         emit("error_msg", {"message": "Invalid field"}); return
 
     with engine.begin() as conn:
-        # Upsert de filas
+        # Upsert
         if not conn.scalar(select(func.count()).select_from(agents).where(agents.c.name == agent)):
             conn.execute(agents.insert().values(name=agent))
         if not conn.scalar(select(func.count()).select_from(status).where(status.c.agent_name == agent)):
@@ -164,7 +166,7 @@ def on_update_cell(data):
             val = (value or "").upper()
             if val not in PRIORITY_VALUES:
                 val = ""
-            conn.execute(status.update().where(status.c.agent_name == agent).values(priority=val if val else None))
+            conn.execute(status.update().where(status.c.agent_name == agent).values(priority=val or None))
         else:
             try:
                 num = int(value)
@@ -176,7 +178,9 @@ def on_update_cell(data):
             else:
                 conn.execute(assignment.update().where(assignment.c.agent_name == agent).values({field: num}))
 
-    socketio.emit("cell_updated", {"agent": agent, "table": table, "field": field, "value": value}, broadcast=True)
+    socketio.emit("cell_updated",
+                  {"agent": agent, "table": table, "field": field, "value": value},
+                  broadcast=True)
 
 @socketio.on("rename_agent")
 def on_rename_agent(data):
@@ -199,7 +203,7 @@ def on_rename_agent(data):
 
     socketio.emit("agent_renamed", {"old_name": old, "new_name": new}, broadcast=True)
 
-# Local run
+# --------- Local run ---------
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "10000"))
     socketio.run(app, host="0.0.0.0", port=port)
