@@ -30,8 +30,7 @@
           </thead>
           <tbody>
             {% for row in state['status'] %}
-            <tr data-agent="{{ row['name'] }}"
-                class="{% if row['priority']=='P1' %}p1{% elif row['priority']=='P2' %}p2{% endif %}">
+            <tr data-agent="{{ row['name'] }}" class="{% if row['priority']=='P1' %}p1{% elif row['priority']=='P2' %}p2{% endif %}">
               <td class="agent-name">{{ row["name"] }}</td>
               <td><input type="number" min="0" value="{{ row['backlog'] }}" data-table="status" data-field="backlog" /></td>
               <td><input type="number" min="0" value="{{ row['active'] }}" data-table="status" data-field="active" /></td>
