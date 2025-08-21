@@ -1,8 +1,9 @@
 /* global io */
 const socket = io({
-  transports: ['websocket', 'polling'],
-  path: '/socket.io/'
+  transports: ['websocket', 'polling'] // sin 'path' para usar /socket.io por defecto
 });
+
+let live = false; // true si el socket está activo
 
 // ---- utils ----
 function clampNonNegative(input) {
@@ -11,15 +12,10 @@ function clampNonNegative(input) {
   input.value = v;
   return v;
 }
-
 function debounce(fn, wait = 300) {
   let t = null;
-  return (...args) => {
-    clearTimeout(t);
-    t = setTimeout(() => fn(...args), wait);
-  };
+  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), wait); };
 }
-
 function applyPriorityRowClass(tableId) {
   const table = document.getElementById(tableId);
   if (!table) return;
@@ -32,10 +28,8 @@ function applyPriorityRowClass(tableId) {
     }
   }
 }
-
 function hydrateFromState(state) {
   if (!state) return;
-
   // Status
   state.status.forEach(row => {
     const tr = document.querySelector(`#status-table tbody tr[data-agent="${row.name}"]`);
@@ -45,7 +39,6 @@ function hydrateFromState(state) {
     const sel = tr.querySelector('select[data-field="priority"]');
     if (sel) sel.value = row.priority || '';
   });
-
   // Assignment
   state.assignment.forEach(row => {
     const tr = document.querySelector(`#assignment-table tbody tr[data-agent="${row.name}"]`);
@@ -56,13 +49,12 @@ function hydrateFromState(state) {
     tr.querySelector('input[data-field="investigation"]').value = row.investigation;
     tr.querySelector('input[data-field="autoclose_tickets"]').value = row.autoclose_tickets;
   });
-
   applyPriorityRowClass('status-table');
 }
 
 // ---- binders ----
 function bindInputs() {
-  // number inputs: emite al cambiar y mientras escribes (debounce)
+  // números
   document.querySelectorAll('input[type="number"]').forEach(input => {
     const send = () => {
       const v = clampNonNegative(input);
@@ -76,7 +68,7 @@ function bindInputs() {
     input.addEventListener('input', debounce(send, 250));
   });
 
-  // priority selects
+  // prioridad
   document.querySelectorAll('select[data-field="priority"]').forEach(sel => {
     sel.addEventListener('change', () => {
       const tr = sel.closest('tr');
@@ -88,7 +80,7 @@ function bindInputs() {
     });
   });
 
-  // rename agent (in Assignment table)
+  // rename agent
   document.querySelectorAll('#assignment-table .agent-input').forEach(inp => {
     const commitRename = () => {
       const tr = inp.closest('tr');
@@ -112,10 +104,15 @@ function bindInputs() {
 
 // ---- socket events ----
 socket.on('connect', () => {
+  live = true;
   console.log('[socket] connected');
 });
-
+socket.on('disconnect', () => {
+  live = false;
+  console.warn('[socket] disconnected; HTTP polling fallback active');
+});
 socket.on('connect_error', (err) => {
+  live = false;
   console.error('[socket] connect_error', err);
 });
 
@@ -157,17 +154,24 @@ function newNameSafe(s) {
   return s.replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
 }
 
-socket.on('error_msg', (data) => {
-  alert(data.message || 'Error');
-});
-
-// fecha (redundante con server, pero útil)
 const todayEl = document.getElementById('today');
 if (todayEl) todayEl.textContent = new Date().toISOString().slice(0,10);
 
-// *** CLAVE: ejecutar bindInputs siempre, esté o no disparado DOMContentLoaded ***
+// Ejecuta siempre el bind (aunque DOMContentLoaded ya haya pasado)
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', bindInputs);
 } else {
   bindInputs();
 }
+
+// ---- HTTP polling fallback (cada 2s si no hay socket) ----
+setInterval(async () => {
+  if (live) return;
+  try {
+    const r = await fetch('/state', { cache: 'no-store' });
+    const data = await r.json();
+    hydrateFromState(data);
+  } catch (e) {
+    console.warn('[poll] failed', e);
+  }
+}, 2000);
