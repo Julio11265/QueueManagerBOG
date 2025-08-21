@@ -28,7 +28,7 @@ html,body{
   color:var(--text);
 }
 
-/* ===== Header con títulos centrados y fecha a la derecha ===== */
+/* ===== Header con título centrado y fecha a la derecha ===== */
 .app-header{
   position:sticky; top:0;
   display:flex; align-items:center; justify-content:center;
@@ -112,9 +112,30 @@ input[type="number"]:focus, select:focus{
   box-shadow: 0 0 0 3px var(--ring);
 }
 
-/* ===== Prioridad por fila ===== */
-tr.p1{ background: var(--row-p1); border-left:4px solid var(--row-p1-border); }
-tr.p2{ background: var(--row-p2); border-left:4px solid var(--row-p2-border); }
+/* ===== Prioridad por fila (color visible en toda la celda) ===== */
+tr.p1 td { background: var(--row-p1) !important; }
+tr.p2 td { background: var(--row-p2) !important; }
+tr.p1 { border-left:4px solid var(--row-p1-border); }
+tr.p2 { border-left:4px solid var(--row-p2-border); }
+/* armoniza inputs/selects cuando hay color de fila */
+tr.p1 input, tr.p1 select { background:#fff7f7 !important; border-color:#fecaca !important; }
+tr.p2 input, tr.p2 select { background:#fffbea !important; border-color:#fde68a !important; }
+
+/* ===== Input de nombre en Assignment con mismo estilo ===== */
+#assignment-table .agent-input{
+  width:100%;
+  padding:10px 12px;
+  border-radius:10px;
+  border:1px solid #cbd5e1;
+  background:#fff;
+  color:#111;
+  outline:none;
+  font-size:14px;
+}
+#assignment-table .agent-input:focus{
+  border-color:var(--accent);
+  box-shadow: 0 0 0 3px var(--ring);
+}
 
 .app-footer{
   text-align:center;
