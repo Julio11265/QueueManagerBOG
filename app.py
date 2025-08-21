@@ -86,7 +86,6 @@ def fetch_state():
         conn.close()
         return {"status": status_rows, "assignment": assign_rows}
     except sqlite3.OperationalError as e:
-        # If first boot raced with a request, create tables and try again once
         if "no such table" in str(e):
             init_db()
             return fetch_state()
@@ -99,7 +98,9 @@ PRIORITY_VALUES = {"", "P1", "P2"}
 # --------- App ---------
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret")
-socketio = SocketIO(app, cors_allowed_origins="*")  # gevent in production
+
+# Use gevent; works on Render free tier with gevent worker
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="gevent")
 
 # Ensure DB exists when app is imported (gunicorn workers)
 init_db()
@@ -172,7 +173,8 @@ def on_update_cell(data):
     conn.commit()
     conn.close()
 
-    socketio.emit("cell_updated", {"agent": agent, "table": table, "field": field, "value": value})
+    # Explicit broadcast so all devices update in real time
+    socketio.emit("cell_updated", {"agent": agent, "table": table, "field": field, "value": value}, broadcast=True)
 
 @socketio.on("rename_agent")
 def on_rename_agent(data):
@@ -212,10 +214,9 @@ def on_rename_agent(data):
         return
 
     conn.close()
-    socketio.emit("agent_renamed", {"old_name": old, "new_name": new})
+    socketio.emit("agent_renamed", {"old_name": old, "new_name": new}, broadcast=True)
 
 # --------- Local run ---------
 if __name__ == "__main__":
-    # Local dev server (for Render we use gunicorn)
     port = int(os.environ.get("PORT", "10000"))
     socketio.run(app, host="0.0.0.0", port=port)
